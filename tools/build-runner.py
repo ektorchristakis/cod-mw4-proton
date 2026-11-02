@@ -34,7 +34,7 @@ def sha256(path):
 
 
 def source_files():
-    files = [ROOT / name for name in ("Makefile", "VERSION", "LICENSE", "THIRD_PARTY.md")]
+    files = [ROOT / name for name in ("Makefile", "VERSION", "LICENSE", "THIRD_PARTY.md", "DISCLAIMER.md")]
     if (ROOT / "README.md").is_file():
         files.append(ROOT / "README.md")
     for name in ("src", "patches", "runtime", "tools", "docs", "licenses", "vendor", "tests"):
@@ -168,7 +168,6 @@ def build(base, renderer, output, prebuilt=None):
             shutil.copy2(source, destination)
         shutil.copytree(renderer / "licenses", share / "licenses/renderer")
         shutil.copy2(ROOT / "LICENSE", share / "licenses/MW4-Proton-LGPL-2.1.txt")
-        shutil.copy2(ROOT / "THIRD_PARTY.md", share / "THIRD_PARTY.md")
 
         manifest = {
             "name": name,

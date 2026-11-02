@@ -21,4 +21,6 @@ The installed msvcrt, ntdll, and WinHTTP hashes matched the assembled runner. Th
 
 Support covers the single-player campaign only. Multiplayer and online modes are unsupported.
 
-The assembled runner starts the original NTFS installation at 1920×1080 and reaches the campaign menu with the existing Resume entry. Mayhem cinematic playback completed and returned to its menu. Further checkpoint, settings, and performance checks are in progress; this document will be updated before release.
+The assembled runner starts the original NTFS installation at 1920×1080 and reaches the campaign menu with the existing Resume entry. Mayhem cinematic playback completed and returned to its menu. Stranded checkpoint loading, keyboard movement, mouse look, pause/resume, and volume control were observed using an explicit process-local CPU topology. Later missions and full campaign completion have not been tested. Performance tuning and the automatic-topology runner retest remain in progress; no stable gameplay frame-rate claim is made yet.
+
+The game selected 7.1 Surround and the Linux audio device exposed eight channels at 48 kHz. PipeWire showed FL, FR, FC, LFE, RL, RR, SL, and SR connected. These observations establish channel configuration and routing, rather than an independent listening test for each channel.
