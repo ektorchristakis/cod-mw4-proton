@@ -1,32 +1,34 @@
 # MW4-Proton
 
-A Proton runner for the **Modern Warfare 4 single-player campaign only**, based on GE-Proton 11-11. It targets campaign build `29465156` and starts `sp26-cod.exe` from an existing Windows installation with the offline loader already present. Multiplayer, online modes, and other game builds are unsupported. Game files stay in their original location; use a dedicated Wine prefix on a Linux filesystem.
+An experimental beta Proton runner for the **Modern Warfare 4 single-player campaign only**, based on GE-Proton 11-11. It targets campaign build `29465156` and starts `sp26-cod.exe` from an existing Windows installation with the offline loader already present. Multiplayer, online modes, and other game builds are unsupported. Game files stay in their original location; use a dedicated Wine prefix on a Linux filesystem.
 
 The runner includes a Wine device implementation, CRT and WinHTTP fixes, a compatible exception-dispatcher layout, and VKD3D-Proton 3.1 with a newer dxil-spirv translator. It does not contain game files, saves, the original Windows driver, or Microsoft DLLs.
+
+Testing is incomplete. This beta is for users willing to try the observed campaign path; stable performance, the complete campaign, and desktop-launch behavior have not been qualified. See the [test record and gaps](docs/validation.md).
 
 The software is supplied without warranty. Account restrictions, suspensions, or bans cannot be ruled out; see the [warranty and liability notice](DISCLAIMER.md).
 
 ## Install and launch
 
-You need the existing campaign installation, Python 3.12 or newer with the `pefile` package, GNU coreutils and GNU tar, and either Steam or `umu-run` to launch the installed runner. Download `MW4-Proton-0.1.0-overlay.tar.xz` and `SHA256SUMS` from the [0.1.0 release](https://github.com/ektorchristakis/cod-mw4-proton/releases/tag/v0.1.0). From the directory containing both downloads, verify and extract the overlay, then run its installer:
+You need the existing campaign installation, Python 3.12 or newer with the `pefile` package, GNU coreutils, GNU tar and `xz`, plus either Steam or `umu-run` to launch the installed runner. Download `MW4-Proton-0.1.0-beta.1-overlay.tar.xz` and `SHA256SUMS` from the [0.1.0-beta.1 release](https://github.com/ektorchristakis/cod-mw4-proton/releases/tag/v0.1.0-beta.1). From the directory containing both downloads, verify and extract the overlay, then run its installer:
 
 ```sh
 sha256sum --check SHA256SUMS
-tar -xf MW4-Proton-0.1.0-overlay.tar.xz
-cd MW4-Proton-0.1.0-overlay
+tar -xf MW4-Proton-0.1.0-beta.1-overlay.tar.xz
+cd MW4-Proton-0.1.0-beta.1-overlay
 python3 tools/install-runner.py \
-  --output "$HOME/.local/share/Steam/compatibilitytools.d/MW4-Proton-0.1.0"
+  --output "$HOME/.local/share/Steam/compatibilitytools.d/MW4-Proton-0.1.0-beta.1"
 ```
 
 The installer downloads the official GE-Proton base and verifies its pinned SHA-256. It refuses to replace an existing runner. See [build and installation](docs/build.md) for offline installation and the complete source build recipe.
 
-For Steam, install under `~/.local/share/Steam/compatibilitytools.d/` as shown above, then restart Steam. If your Steam installation uses another data directory, install under its `compatibilitytools.d/` instead. Add the existing `sp26/sp26-cod.exe` as a non-Steam game, select **MW4-Proton 0.1.0** in its compatibility settings, and set the shortcut’s **Start In** directory to the game installation root, one directory above `sp26`. Use a separate Steam shortcut and prefix for this game.
+For Steam, install under `~/.local/share/Steam/compatibilitytools.d/` as shown above, then restart Steam. If your Steam installation uses another data directory, install under its `compatibilitytools.d/` instead. Add the existing `sp26/sp26-cod.exe` as a non-Steam game, select **MW4-Proton 0.1.0-beta.1** in its compatibility settings, and set the shortcut’s **Start In** directory to the game installation root, one directory above `sp26`. Use a separate Steam shortcut and prefix for this game.
 
 For UMU, install `umu-run` and replace the example game path with the absolute path to your existing installation. `WINEPREFIX` names this game’s dedicated Linux prefix:
 
 ```sh
 WINEPREFIX="$HOME/Games/prefixes/mw4" \
-PROTONPATH="$HOME/.local/share/Steam/compatibilitytools.d/MW4-Proton-0.1.0" \
+PROTONPATH="$HOME/.local/share/Steam/compatibilitytools.d/MW4-Proton-0.1.0-beta.1" \
 GAMEID=umu-default \
 umu-run '/path/to/Call of Duty - Modern Warfare 4/sp26/sp26-cod.exe'
 ```
@@ -43,12 +45,12 @@ Sharing progress is optional and manual. The corresponding location in a Linux W
 
 ## Compatibility
 
-The campaign-specific device implements requests observed in build `29465156`; unknown requests fail. Testing so far covers the menu, Mayhem cinematic playback, and a Stranded checkpoint with movement, mouse look, pause/resume, and volume control. Later missions, campaign completion, and stable frame rate are not yet established. The [campaign-only device scope](docs/compatibility.md#wine-device) and [tested campaign coverage](docs/validation.md#campaign-coverage) give the exact limits.
+The campaign-specific device implements requests observed in build `29465156`; unknown requests fail. Testing so far covers the menu, Mayhem cinematic playback, and a Stranded checkpoint with movement, mouse look, and pause/resume; master volume was set to zero during that session. Later missions, campaign completion, and stable frame rate are not yet established. The [campaign-only device scope](docs/compatibility.md#wine-device) and [tested campaign coverage](docs/validation.md#campaign-coverage) give the exact limits.
 
 [Compatibility details](docs/compatibility.md) explains the fixes and their tests. [Validation](docs/validation.md) records the tested runtime, hardware, and gameplay coverage.
 
 ## Development
 
-Development happens on `main`. Keep changes small, run `make check`, and exercise affected Windows probes through the assembled runner. Runtime changes also need a real campaign test. Release versions follow SemVer, with `VERSION` as the source of truth and tags named `vMAJOR.MINOR.PATCH`.
+Development happens on `main`. Keep changes small, run `make check`, and exercise affected Windows probes through the assembled runner. Runtime changes also need a real campaign test. Release versions follow SemVer, with `VERSION` as the source of truth and tags named `v<VERSION>`, including prereleases such as `v0.1.0-beta.1`.
 
 Project code is licensed under LGPL-2.1-or-later. Third-party code retains its own notices; see [THIRD_PARTY.md](THIRD_PARTY.md).

@@ -1,6 +1,6 @@
 # Build MW4-Proton
 
-Run the source-build and release-packaging commands below from the repository root on x86_64 Linux. The build needs Python 3.12 or newer with `pefile`, GNU Make, GNU coreutils, GNU tar, curl, a native C compiler, MinGW-w64 GCC and G++, MinGW DDK headers, MinGW WIDL, Git, Meson, Ninja, and glslang. The renderer uses `x86_64-w64-mingw32-*` tools. No game installation is needed to build the runner.
+Run the source-build and release-packaging commands below from the repository root on x86_64 Linux. The build needs Python 3.12 or newer with `pefile`, GNU Make, GNU coreutils, GNU tar, `xz`, curl, a native C compiler, MinGW-w64 GCC and G++, MinGW DDK headers, MinGW WIDL, Git, Meson, Ninja, and glslang. The renderer uses `x86_64-w64-mingw32-*` tools. No game installation is needed to build the runner.
 
 Download and extract the pinned upstream base:
 
@@ -51,7 +51,7 @@ tar -C dist -cJf "dist/MW4-Proton-$(cat VERSION)-overlay.tar.xz" \
 
 The `SHA256SUMS` file names the archive by basename, so a player can verify both downloaded release files from one directory. `package-overlay.py` runs `make all`, checks the renderer’s hashes and source pins, and includes every tracked file from its source tree and recursive submodules in `renderer/source.tar.xz`. The source archive includes `SOURCE-MANIFEST.json` with the exact revisions. The renderer archive rejects staged and unstaged changes to tracked files in VKD3D-Proton and its submodules. It archives tracked files at the pinned revisions; untracked renderer files are omitted. This project's selected source files come from the current checkout and are hash-checked for changes during packaging; the packager does not require a clean project Git tree. Its four compiled payload files are recorded in `payload/manifest.json`. `release-manifest.json` records the renderer, payload, and source-archive hashes.
 
-After extracting the overlay, change into its root directory and run its installer. Installation needs Python 3.12 or newer, `pefile`, GNU coreutils, and enough space for the GE archive, its temporary extraction, and the assembled runner. GNU tar is also needed to extract the downloaded overlay; a compiler is unnecessary for installation:
+After extracting the overlay, change into its root directory and run its installer. Installation needs Python 3.12 or newer, `pefile`, GNU coreutils, and enough space for the GE archive, its temporary extraction, and the assembled runner. GNU tar and `xz` are also needed to extract the downloaded overlay; a compiler is unnecessary for installation:
 
 ```sh
 python3 tools/install-runner.py \
@@ -62,7 +62,7 @@ The installer caches the verified upstream archive under `$XDG_CACHE_HOME/mw4-pr
 
 ## Rebuild the included renderer source
 
-The pinned Git build above is the release recipe. To build the included renderer source offline, install the same build dependencies and run these commands from the root of the extracted release overlay (`MW4-Proton-0.1.0-overlay`):
+The pinned Git build above is the release recipe and was used for the renderer in this beta. The exported-source offline rebuild below has not been run for this beta. To try it, install the same build dependencies and run these commands from the root of the extracted release overlay (`MW4-Proton-0.1.0-beta.1-overlay`):
 
 ```sh
 mkdir -p build/included-source
@@ -78,4 +78,4 @@ meson compile -C build/included-x64
 
 The two DLLs are under `build/included-x64/libs/d3d12/` and `libs/d3d12core/`. An archive build has no Git metadata, so upstream's fallback version strings differ from the release build. `tools/build-vkd3d.sh` supplies the compiler path normalization and stripping steps used for the packaged DLLs.
 
-Publish the overlay and the generated `dist/SHA256SUMS` together after runtime qualification. Keep game files, original drivers, shader captures, saves, icons, diagnostic recordings, and local toolchains out of the package. A full runner assembled for local use contains the upstream GE distribution; publishing that full directory would additionally require covering the corresponding source and notices of every redistributed GE component.
+For this experimental beta, publish the overlay and the generated `dist/SHA256SUMS` together with the documented testing limits. Keep game files, original drivers, shader captures, saves, icons, diagnostic recordings, and local toolchains out of the package. A full runner assembled for local use contains the upstream GE distribution; publishing that full directory would additionally require covering the corresponding source and notices of every redistributed GE component.
