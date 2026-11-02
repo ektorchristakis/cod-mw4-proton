@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Start the campaign with its Wine device; delegate other verbs to GE-Proton."""
+
+import fcntl
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+
+
+GAME_ARGUMENT = "hdeyguxs3zaumvlgvybm2vyc"
+
+
+def cpu_list(text):
+    cpus = set()
+    for item in text.strip().split(","):
+        ends = item.split("-")
+        first, last = int(ends[0]), int(ends[-1])
+        if len(ends) > 2 or first < 0 or last < first:
+            raise ValueError("Invalid Linux CPU list")
+        cpus.update(range(first, last + 1))
+    return cpus
+
+
+def campaign_topology(env, cpu_root=Path("/sys/devices/system/cpu")):
+    if "WINE_CPU_TOPOLOGY" in env:
+        return None
+    try:
+        online = cpu_list((cpu_root / "online").read_text())
+        if online == set(range(len(online))):
+            return None
+        # This Wine parser bounds host IDs by the online count, rather than
+        # the highest host ID. Exclude IDs it rejects and map the rest densely.
+        allowed = sorted(online & os.sched_getaffinity(0) & set(range(min(len(online), 64))))
+        if not allowed:
+            raise ValueError("No allowed online CPU fits GE-Proton's topology mapping; "
+                             "adjust this launch's CPU affinity or set WINE_CPU_TOPOLOGY explicitly.")
+        groups = []
+        remaining = set(allowed)
+        while remaining:
+            cpu = min(remaining)
+            try:
+                siblings = cpu_list((cpu_root / f"cpu{cpu}/topology/thread_siblings_list").read_text())
+            except FileNotFoundError:
+                siblings = {cpu}
+            group = sorted(siblings & remaining)
+            if cpu not in group:
+                group = [cpu]
+            groups.append(group)
+            remaining.difference_update(group)
+        # The override syntax represents either two threads per core or one.
+        # Use SMT only when every selected core has both of its threads.
+        smt = all(len(group) == 2 for group in groups)
+        mapped = [cpu for group in groups for cpu in group]
+        count = f"{len(groups)}s" if smt else str(len(mapped))
+        env["WINE_CPU_TOPOLOGY"] = count + ":" + ",".join(map(str, mapped))
+        print(f"MW4-Proton: sparse CPU numbering; using {env['WINE_CPU_TOPOLOGY']}", file=sys.stderr)
+        return set(mapped)
+    except OSError as error:
+        raise ValueError(f"Cannot read Linux CPU topology: {error}") from error
+
+
+def run_campaign(command, env, lock, prefix, root, affinity=None):
+    child = None
+    interrupted = None
+
+    def forward(signum, frame):
+        nonlocal interrupted
+        interrupted = signum
+        if child is not None:
+            try:
+                os.killpg(child.pid, signum)
+            except ProcessLookupError:
+                pass
+
+    signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+    previous = {signum: signal.signal(signum, forward) for signum in signals}
+    try:
+        child = subprocess.Popen(command, env=env, start_new_session=True,
+                                 pass_fds=(lock.fileno(),),
+                                 preexec_fn=(lambda: os.sched_setaffinity(0, affinity))
+                                 if affinity is not None else None)
+        if interrupted is not None:
+            forward(interrupted, None)
+        result = child.wait()
+        # Wine processes can outlive the Proton launcher. Keep the prefix lock
+        # until its server has finished, including after a launcher stop signal.
+        server_env = env.copy()
+        server_env["WINEPREFIX"] = str(prefix)
+        subprocess.run([str(root / "files/bin/wineserver"), "-w"],
+                       env=server_env, check=True)
+        return 128 + interrupted if interrupted is not None else result
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def windows_path(path):
+    text = str(path)
+    if len(text) >= 3 and text[1:3] in (":\\", ":/"):
+        return text.replace("/", "\\")
+    return "Z:" + str(Path(text).resolve()).replace("/", "\\")
+
+
+def campaign_command(root, arguments):
+    if (len(arguments) < 2 or arguments[0] not in ("run", "waitforexitandrun") or
+            arguments[1].replace("\\", "/").rsplit("/", 1)[-1].lower() != "sp26-cod.exe"):
+        return None
+    if arguments[2:] not in ([], [GAME_ARGUMENT]):
+        raise ValueError("This runner supports the campaign's standard launch arguments only.")
+    files = root / "files/share/mw4"
+    return [str(root / "proton-base"), arguments[0], str(files / "controller.exe"),
+            "game", windows_path(files / "randgrid.sys"), r"C:\mw4-launch.log",
+            windows_path(arguments[1])]
+
+
+def main():
+    root = Path(__file__).resolve().parent
+    arguments = sys.argv[1:]
+    try:
+        command = campaign_command(root, arguments)
+        if command is None:
+            os.execv(str(root / "proton-base"), [str(root / "proton-base"), *arguments])
+        prefix = os.environ.get("WINEPREFIX")
+        if not prefix:
+            compat = os.environ.get("STEAM_COMPAT_DATA_PATH")
+            if not compat:
+                raise ValueError("Start this runner through Steam or UMU with a dedicated game prefix.")
+            prefix = str(Path(compat) / "pfx")
+        prefix = Path(prefix).resolve()
+        prefix.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = prefix.parent / (prefix.name + ".mw4.lock")
+        with lock_path.open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ValueError("Modern Warfare 4 is already running in this prefix.") from None
+            env = os.environ.copy()
+            overrides = [entry for entry in env.get("WINEDLLOVERRIDES", "").split(";")
+                         if entry and entry.split("=", 1)[0].lower() not in
+                         ("msvcrt", "winhttp", "dbghelp")]
+            overrides += ["msvcrt=n,b", "winhttp=n,b", "dbghelp=n,b"]
+            env["WINEDLLOVERRIDES"] = ";".join(overrides)
+            env["WINE_DISABLE_EXE_ASLR"] = "1"
+            affinity = campaign_topology(env)
+            return run_campaign(command, env, lock, prefix, root, affinity)
+    except ValueError as error:
+        print(f"MW4-Proton: {error}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

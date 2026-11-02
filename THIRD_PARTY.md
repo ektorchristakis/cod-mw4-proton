@@ -1,0 +1,20 @@
+# Source and licenses
+
+MW4-Proton's own code is Copyright 2026 Ektor Christakis and is available under the GNU Lesser General Public License, version 2.1 or later. See [LICENSE](LICENSE). Files carrying another license retain that license.
+
+The release overlay contains this project's code and the rebuilt renderer, with their source and notices. Its installer fetches GE-Proton directly from the official release and verifies the pinned archive hash. GE binaries are not part of the overlay. The assembled local runner preserves GE's top-level `LICENSE`, `LICENSE.OFL`, `PATENTS.AV1`, and component notices. This repository also retains those collected notices in [licenses](licenses). A custom runner does not imply endorsement or support from the upstream projects.
+
+| Component | Exact source | License / notice |
+|---|---|---|
+| GE-Proton 11-11 | [c0c2ee35e6d4d3bff4d39c6246ac46636434feb8](https://github.com/GloriousEggroll/proton-ge-custom/tree/c0c2ee35e6d4d3bff4d39c6246ac46636434feb8), including recursive submodules and its preparation scripts | Multiple licenses; [collected release notices](licenses/GE-Proton-LICENSE) |
+| Wine runtime patches | Wine source and GE patch set selected by the GE revision above; local patching programs in `patches/` and adapters in `src/` | LGPL-2.1-or-later |
+| VKD3D-Proton 3.1 | [4522cc1a8b1347f1ab1b0f7b14a23ed9444d95d1](https://github.com/HansKristian-Work/vkd3d-proton/tree/4522cc1a8b1347f1ab1b0f7b14a23ed9444d95d1) | LGPL-2.1-or-later; upstream `LICENSE` and `COPYING` accompany the renderer |
+| dxil-spirv | [4e4c4be90b7e8008194ae70243d54c762aba021f](https://github.com/HansKristian-Work/dxil-spirv/tree/4e4c4be90b7e8008194ae70243d54c762aba021f) | [MIT and included component notices](licenses/dxil-spirv-LICENSE.MIT) |
+| dxbc-spirv | [8dae2d8573af08378c6059aca3d5987da99d20b5](https://github.com/doitsujin/dxbc-spirv/tree/8dae2d8573af08378c6059aca3d5987da99d20b5) | [MIT](licenses/dxbc-spirv-LICENSE) |
+| Ascon reference implementation | Files under `vendor/ascon`, from the [official Ascon C implementation](https://github.com/ascon/ascon-c) using the Ascon-128 v1.2 algorithm | [CC0-1.0](vendor/ascon/LICENSE) |
+| GCC runtime libraries | MinGW-w64 GCC runtime and libstdc++ linked by the build toolchain | [GPL version 3](licenses/GCC-COPYING3) with the [GCC Runtime Library Exception](licenses/GCC-COPYING.RUNTIME) |
+| MinGW-w64 runtime and winpthreads | Runtime support linked by the MinGW-w64 toolchain | [Zope Public License 2.1 and component notices](licenses/MinGW-w64-COPYING), [disclaimer](licenses/MinGW-w64-DISCLAIMER), [public-domain notice](licenses/MinGW-w64-DISCLAIMER.PD) |
+
+`tools/build-runner.py` packages this repository's source, notices, and input/output hash manifest under `files/share/mw4/`. It preserves the upstream runner's files except for the explicitly recorded runtime replacements and launcher metadata. Python bytecode caches are excluded.
+
+The overlay's `renderer/source.tar.xz` contains VKD3D-Proton, dxil-spirv, and all recursive submodule sources at the revisions recorded in its manifest. The complete upstream license files remain in those sources, and renderer notices also accompany the DLLs. The project's own source and build scripts are included directly in the overlay. [Build instructions](docs/build.md#package-a-release-overlay) describe packaging and rebuilding. No game executable, original driver, game resource, shader dump, icon, or save belongs in the release archive.
