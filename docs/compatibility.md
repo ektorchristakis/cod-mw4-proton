@@ -46,6 +46,76 @@ For campaign launches on a sparse host, the wrapper intersects the existing proc
 
 The wrapper retains SMT pairs when every selected core has two available threads; otherwise it keeps the selected CPUs with one reported thread per core. Dense hosts retain their normal topology. An explicit `WINE_CPU_TOPOLOGY` environment variable takes precedence and leaves affinity unchanged, so a custom mapping must itself fit the host and launch affinity. If the automatic mapping has no usable CPUs, the runner stops with a diagnostic before launching Wine. The host tests cover sparse numbering, affinity restrictions, SMT, dense hosts, explicit overrides, and an empty usable subset.
 
+## Checkpoint content mismatch
+
+If Resume loads the right mission but resets objectives, position, or equipment, close the game and preserve the original save before another autosave can replace it. Windows and Linux need matching campaign content as well as the same save. Reaching the menu or seeing the correct mission name does not establish that the checkpoint was accepted.
+
+The observed Stranded failure was a content mismatch: the game read all 7,330,182 bytes of the checkpoint payload and its body validation succeeded, but the loaded script aggregate was `e909037b` while the checkpoint required `cd2bd106`. Loading the matching campaign patch made the aggregates agree. The user confirmed that the completed objectives, position, and loadout were restored. See the [recovery record](validation.md#checkpoint-recovery) for the observations and remaining limits.
+
+### Restore the tested campaign patch
+
+This manual example applies only to campaign executable build `29465156` with content build `13.1.29269899_874`, campaign application `7501`, and manifest version `31`. These are different identifiers for the tested executable and its content; they are not interchangeable version numbers. The runner supplies neither the content nor its version-cache file. A storefront repair or update has not been verified to restore this exact historical combination.
+
+1. **Close the game and back up saves.** Close it on both operating systems. Make an independent backup of the original Windows `SteamCloud` directory and any existing Linux campaign saves before changing shared links or content. Retain these backups through the recovery check; a retry can write a new autosave.
+
+2. **Confirm the installation before applying this example.** Establish that the installed campaign executable is the supported build `29465156`. In that installation's `sp26/ccsconfig.json`, check the `sp26` entry for `engineVersion` `13.1`, `ccsRestrict` `29269899_874`, and the application-`7501` CDN path. Its `gvsURL` and `configId` must also match the cache values shown below. The configuration values alone do not prove the executable build. If the executable build is unknown or any value differs, stop: do not transplant this patch or cache into another build or substitute an arbitrary newer patch.
+
+3. **Download into an empty staging directory outside the game installation.** These are the four recorded official source links for the tested patch. Keep their filenames unchanged. The SHA-256 values below were recorded during this recovery; they are file-identity checks, not publisher-signed checksums. The links' continued availability is not guaranteed.
+
+   | File | Recorded official source |
+   | --- | --- |
+   | `manifest_patch_pc_13.1.29269899_874.txt` | [Main manifest](https://objectstore-publishers-rex.prod.demonware.net/7501/activision/tu1/31/manifest_patch_pc_13.1.29269899_874.txt) |
+   | `pack_patch_pc_13.1.29269899_874.bin` | [Main pack](https://objectstore-publishers-rex.prod.demonware.net/7501/activision/tu1/31/pack_patch_pc_13.1.29269899_874.bin) |
+   | `dev_manifest_patch_pc_13.1.29269899_874.txt` | [Development manifest](https://objectstore-publishers-rex.prod.demonware.net/7501/activision/tu1/31/dev_manifest_patch_pc_13.1.29269899_874.txt) |
+   | `dev_pack_patch_pc_13.1.29269899_874.bin` | [Development pack](https://objectstore-publishers-rex.prod.demonware.net/7501/activision/tu1/31/dev_pack_patch_pc_13.1.29269899_874.bin) |
+
+4. **Check all four downloads.** From the staging directory containing those files, run:
+
+   ```sh
+   sha256sum --check <<'SHA256SUMS'
+   42d2ce8ab9a5dec0248a2019919d31ac079ac0c07757af8f56bf5bcccec0f368  manifest_patch_pc_13.1.29269899_874.txt
+   3308f656312280d64fcdab69da50b483bcb3fd9fd61b8c5339f851303dfd6752  pack_patch_pc_13.1.29269899_874.bin
+   34cb5ba1a3e22ded8288594283fdfcf77314374fd80109a2387fd51562c9adae  dev_manifest_patch_pc_13.1.29269899_874.txt
+   4d40b448aa6965546c62a7ff41e13b9d35507d202106d53ba9611dd946e7313b  dev_pack_patch_pc_13.1.29269899_874.bin
+   SHA256SUMS
+   ```
+
+   All four must report `OK`. Stop if a file is missing or differs; do not install a partial or mismatched set.
+
+5. **Back up the five destination files, then install the four checked downloads.** The tree below starts at the game installation root, one directory above `sp26`. Before copying, back up any existing files at these five exact paths to a separate directory outside `extccs`, preserving their relative paths. Record which paths were absent so rollback can remove only newly added files. Leave unrelated `extccs` files and other version directories alone. Create `sp26/main/extccs/31/` if needed and copy the four checked downloads there. Run the same checksum command from the installed `31/` directory and require four `OK` results again.
+
+   ```text
+   sp26/
+     sp26-cod.exe
+     ccsconfig.json
+     main/extccs/
+       version_patch_pc_13.1.29269899_874.json
+       31/
+         manifest_patch_pc_13.1.29269899_874.txt
+         pack_patch_pc_13.1.29269899_874.bin
+         dev_manifest_patch_pc_13.1.29269899_874.txt
+         dev_pack_patch_pc_13.1.29269899_874.bin
+   ```
+
+6. **Write the version-cache record at the `extccs` root.** After preserving any existing file in step 5, create `sp26/main/extccs/version_patch_pc_13.1.29269899_874.json` with this content:
+
+   ```json
+   {
+       "formatVersion": 1,
+       "version": 31,
+       "gvsURL": "https://rex-gvs.prod.demonware.net/v1/public/",
+       "gvsConfigId": "452de38822126ed008205a38b00a57ab"
+   }
+   ```
+
+   This record was locally constructed in the existing downloader's cache schema using the campaign configuration and manifest version. It was not downloaded as official version metadata. It was included in the working setup; its independent necessity was not isolated. Do not use it as a template for other content builds.
+
+7. **Launch normally and check the recovered state.** Use the regular Steam or UMU launch documented in the [README](../README.md#install-and-launch), without an experimental content mount. Compare Resume with the preserved checkpoint's expected objectives, location, and loadout. Correct filenames and matching hashes establish the input files, not that the game selected them or accepted the save. If the mission starts fresh again, close the game, retain the original backup, and investigate before continuing to another autosave.
+
+8. **Roll back if needed.** With the game closed on both systems, restore only the five named destination files from step 5. Remove a named destination file only if it was recorded as absent before this procedure. Preserve unrelated `extccs` content and other version directories; do not delete the whole `extccs` or `31` directory. If a retry changed the save, retain that changed copy separately before restoring the preserved original. Keep the backups until you have checked the result.
+
+This procedure describes the setup used for the observed recovery and subsequent regular launch from the permanent installation. It does not qualify other checkpoints or builds, future save writes, a Windows boot and cross-OS save roundtrip, sustained performance, or stability. Do not bypass the script compatibility check or edit a save header to force acceptance: the successful repair loaded matching content without changing the campaign executable or suppressing validation.
+
 ## Maintenance
 
 The PE patchers reject unknown layouts, signed inputs, missing header space, and already patched images. The runner builder additionally requires the exact input hashes from GE-Proton 11-11. Upgrade the base by reviewing those assumptions and rerunning the runtime probes; do not disable the checks to accept another Wine version.
