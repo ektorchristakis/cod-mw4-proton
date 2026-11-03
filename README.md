@@ -4,7 +4,7 @@ An experimental beta Proton runner for the **Modern Warfare 4 single-player camp
 
 The runner includes a Wine device implementation, CRT and WinHTTP fixes, a compatible exception-dispatcher layout, and VKD3D-Proton 3.1 with a newer dxil-spirv translator. It does not contain game files, saves, the original Windows driver, or Microsoft DLLs.
 
-Testing is incomplete. This beta is for users willing to try the observed campaign path; stable performance, the complete campaign, and desktop-launch behavior have not been qualified. See the [test record and gaps](docs/validation.md).
+Testing is incomplete. This beta is for users willing to try the observed campaign path; stable performance, the complete campaign, audible quality, and a shared-save roundtrip between Linux and Windows remain unqualified. See the [test record and gaps](docs/validation.md), including [post-beta observations](docs/validation.md#post-beta-observations-2026-11-03).
 
 The software is supplied without warranty. Account restrictions, suspensions, or bans cannot be ruled out; see the [warranty and liability notice](DISCLAIMER.md).
 
@@ -46,6 +46,8 @@ Sharing progress is optional and manual. The corresponding location in a Linux W
 ## Compatibility
 
 The campaign-specific device implements requests observed in build `29465156`; unknown requests fail. Testing so far covers the menu, Mayhem cinematic playback, and a Stranded checkpoint with movement, mouse look, and pause/resume; master volume was set to zero during that session. Later missions, campaign completion, and stable frame rate are not yet established. The [campaign-only device scope](docs/compatibility.md#wine-device) and [tested campaign coverage](docs/validation.md#campaign-coverage) give the exact limits.
+
+After publication, the released beta selected its CPU mapping automatically and loaded Stranded, where keyboard movement was observed; that run exited with code zero. A local GNOME desktop entry activated with `gio launch` reached the game menu. Actual icon double-click, audible output, and a shared-save roundtrip remain unverified. These observations do not qualify the complete campaign or sustained performance; see the [post-beta record](docs/validation.md#post-beta-observations-2026-11-03).
 
 [Compatibility details](docs/compatibility.md) explains the fixes and their tests. [Validation](docs/validation.md) records the tested runtime, hardware, and gameplay coverage.
 
