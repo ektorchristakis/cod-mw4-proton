@@ -36,6 +36,12 @@ VKD3D-Proton 3.1 is built with dxil-spirv revision `4e4c4be90b7e8008194ae70243d5
 
 The renderer is installed in Proton's source DLL directory, so normal prefix synchronization copies the intended version. Installing only a DLL in a prefix is insufficient: Proton replaces it on launch.
 
+## NVAPI memory reporting
+
+Version `0.1.0-beta.2` replaces GE-Proton 11-11's DXVK-NVAPI 0.9.2 components with the official 0.9.3 release. Upstream 0.9.3 [changes available/free VRAM reporting](https://github.com/jp7677/dxvk-nvapi/releases/tag/v0.9.3) to better match Windows NVAPI. The builder installs the full applicable x86/x64 runtime set and its notices. It records the pinned archive and installed component hashes in the runner manifest.
+
+This dependency correction does not establish the cause of every slowdown or demonstrate a sustained frame rate. The [validation record](validation.md#beta2-launcher-checks) distinguishes launcher observations from gameplay and performance qualification.
+
 ## Sparse CPU numbering
 
 With some host CPUs offline, GE-Proton 11-11 can return a raw Linux CPU ID from `GetCurrentProcessorNumber` while `CallNtPowerInformation` initializes only an online-count-sized array. The campaign indexes that array by the reported CPU ID to obtain its current MHz. An out-of-range selection can read a zero MHz value and lead to division by zero during checkpoint loading.

@@ -3,6 +3,7 @@
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,10 +11,17 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("nvapi", ROOT / "tools/nvapi.py")
+nvapi = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(nvapi)
+spec = importlib.util.spec_from_file_location("runner_files", ROOT / "tools/runner_files.py")
+runner_files = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner_files)
 BASE_NAME = "GE-Proton11-11"
 BASE_REVISION = "c0c2ee35e6d4d3bff4d39c6246ac46636434feb8"
 BASE_ARCHIVE_SHA256 = "aa85986cada5709aa8bbfa8add7f3bfb925cbe15710c98995898d308ff2ca3c1"
@@ -70,16 +78,42 @@ def check_inputs(base, renderer):
     return stamp, renderer_hashes
 
 
-def replace_file(source, destination):
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Break copied aliases before replacing a DLL; never follow a symlink into
-    # another runner or modify a second file through a preserved hard link.
-    if destination.exists() or destination.is_symlink():
-        destination.unlink()
-    shutil.copy2(source, destination)
+def check_installed_runner(runner):
+    runner = runner.resolve(strict=True)
+    version = (ROOT / "VERSION").read_text().strip()
+    manifest = json.loads((runner / "files/share/mw4/manifest.json").read_text())
+    if not isinstance(manifest, dict) or manifest.get("version") != version:
+        raise ValueError(f"Expected an assembled MW4-Proton {version} runner")
+    metadata = manifest.get("dxvk_nvapi")
+    if (not isinstance(metadata, dict) or metadata.get("version") != nvapi.VERSION or
+            metadata.get("revision") != nvapi.REVISION or
+            metadata.get("release_archive_sha256") != nvapi.ARCHIVE_SHA256):
+        raise ValueError("Runner does not contain the pinned DXVK-NVAPI release")
+    files = manifest.get("files")
+    required = {str(WINE_DLLS / name) for name in BASE_HASHES}
+    required.update(str(RENDERER_DLLS / name) for name in ("d3d12.dll", "d3d12core.dll"))
+    required.update(nvapi.FILES.values())
+    required.update(("proton", "proton-base", "version", "compatibilitytool.vdf",
+                     "files/share/mw4/controller.exe", "files/share/mw4/randgrid.sys"))
+    if not isinstance(files, dict) or not required.issubset(files):
+        raise ValueError("Runner manifest is missing installed components")
+    for relative, expected in files.items():
+        path = Path(relative)
+        if path.is_absolute() or ".." in path.parts or sha256(runner / path) != expected:
+            raise ValueError(f"Runner hash mismatch or invalid manifest path: {relative}")
+    for name in ("wine", "wineserver"):
+        executable = runner / "files/bin" / name
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise ValueError(f"Runner Wine executable is missing or not executable: {executable}")
+    toolmanifest = runner / "toolmanifest.vdf"
+    if sha256(toolmanifest) != manifest.get("toolmanifest_sha256"):
+        raise ValueError("Runner toolmanifest SHA-256 does not match its recorded hash")
+    if not re.search(r'"require_tool_appid"\s+"4183110"', toolmanifest.read_text()):
+        raise ValueError("Runner toolmanifest does not select the expected Steam runtime")
+    return runner
 
 
-def build(base, renderer, output, prebuilt=None):
+def build(base, renderer, output, prebuilt=None, nvapi_archive=None):
     output = Path(os.path.abspath(output))
     output = output.parent.resolve() / output.name
     if output.exists() or output.is_symlink():
@@ -91,6 +125,7 @@ def build(base, renderer, output, prebuilt=None):
         raise ValueError("VERSION must contain a semantic version")
     name = f"MW4-Proton-{version}"
     stamp, renderer_hashes = check_inputs(base, renderer)
+    nvapi_archive = nvapi.release_archive(nvapi_archive)
     sources = {str(path.relative_to(ROOT)): sha256(path) for path in source_files()}
     binaries = ROOT / "build"
     if prebuilt is None:
@@ -110,6 +145,15 @@ def build(base, renderer, output, prebuilt=None):
         runner = temporary / name
         runner.mkdir()
         subprocess.run(["cp", "-a", "--reflink=auto", "--", str(base) + "/.", str(runner)], check=True)
+        destinations = [WINE_DLLS / dll for dll in BASE_HASHES]
+        destinations.extend(RENDERER_DLLS / dll for dll in renderer_hashes)
+        destinations.extend(map(Path, nvapi.FILES.values()))
+        destinations.extend(Path("files/share/mw4") / name for name in
+                            ("controller.exe", "randgrid.sys", "manifest.json", "manifests/msvcrt.json",
+                             "manifests/ntdll.json", "manifests/winhttp.json", "licenses/renderer/LICENSE"))
+        destinations.extend(Path("files/share/mw4/source") / relative for relative in sources)
+        for relative in destinations:
+            runner_files.checked_destination(runner, runner / relative)
         for directory, subdirectories, files in os.walk(runner):
             if "__pycache__" in subdirectories:
                 cache = Path(directory) / "__pycache__"
@@ -135,20 +179,24 @@ def build(base, renderer, output, prebuilt=None):
             patched = temporary / dll
             subprocess.run([sys.executable, str(ROOT / "patches" / script),
                             str(base / WINE_DLLS / dll), *map(str, adapters), str(patched)], check=True)
-            replace_file(patched, runner / WINE_DLLS / dll)
-            shutil.copy2(patched.with_suffix(".json"), manifests / f"{Path(dll).stem}.json")
+            runner_files.replace_file(patched, runner / WINE_DLLS / dll, runner)
+            runner_files.replace_file(patched.with_suffix(".json"), manifests / f"{Path(dll).stem}.json", runner)
             changed.append(WINE_DLLS / dll)
 
         for dll in renderer_hashes:
-            replace_file(renderer / "x64" / dll, runner / RENDERER_DLLS / dll)
+            runner_files.replace_file(renderer / "x64" / dll, runner / RENDERER_DLLS / dll, runner)
             changed.append(RENDERER_DLLS / dll)
+        nvapi_metadata = nvapi.install(nvapi_archive, runner)
+        changed.extend(map(Path, nvapi.FILES.values()))
         for filename in ("controller.exe", "randgrid.sys"):
-            replace_file(binaries / filename, share / filename)
+            runner_files.replace_file(binaries / filename, share / filename, runner)
             changed.append(Path("files/share/mw4") / filename)
 
         (runner / "proton").rename(runner / "proton-base")
         shutil.copy2(ROOT / "runtime/proton", runner / "proton")
         (runner / "proton").chmod(0o755)
+        for filename in ("version", "compatibilitytool.vdf"):
+            (runner / filename).unlink(missing_ok=True)
         (runner / "version").write_text(f"{stamp} {name}\n")
         (runner / "compatibilitytool.vdf").write_text(
             '"compatibilitytools"\n{\n  "compat_tools"\n  {\n'
@@ -164,10 +212,9 @@ def build(base, renderer, output, prebuilt=None):
             if sha256(source) != expected:
                 raise ValueError(f"Source changed during the build: {relative}; retry the build")
             destination = share / "source" / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, destination)
+            runner_files.replace_file(source, destination, runner)
         shutil.copytree(renderer / "licenses", share / "licenses/renderer")
-        shutil.copy2(ROOT / "LICENSE", share / "licenses/MW4-Proton-LGPL-2.1.txt")
+        runner_files.replace_file(ROOT / "LICENSE", share / "licenses/MW4-Proton-LGPL-2.1.txt", runner)
 
         manifest = {
             "name": name,
@@ -180,11 +227,12 @@ def build(base, renderer, output, prebuilt=None):
                 "inputs": {str(WINE_DLLS / dll): digest for dll, digest in BASE_HASHES.items()},
             },
             "renderer": {"vkd3d_proton": VKD3D_REVISION, "dxil_spirv": DXIL_REVISION},
+            "dxvk_nvapi": nvapi_metadata,
             "source_files": sources,
             "files": {str(path): sha256(runner / path) for path in sorted(changed)},
             "toolmanifest_sha256": sha256(runner / "toolmanifest.vdf"),
         }
-        (share / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        runner_files.prepare_destination(runner, share / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         subprocess.run(["mv", "-T", "--no-clobber", "--", str(runner), str(output)], check=True)
         if runner.exists():
             raise FileExistsError(f"Output appeared during the build: {output}")
@@ -199,13 +247,15 @@ def main():
                         help="New runner directory, e.g. dist/MW4-Proton-0.1.0")
     parser.add_argument("--prebuilt", type=Path,
                         help="Use an overlay's hash-checked payload instead of compiling")
+    parser.add_argument("--nvapi-archive", type=Path,
+                        help="Use the pinned DXVK-NVAPI release archive without downloading")
     args = parser.parse_args()
     try:
         output = Path(os.path.abspath(args.output))
         output = output.parent.resolve() / output.name
         build(args.base_runner.resolve(strict=True), args.renderer.resolve(strict=True), output,
-              args.prebuilt.resolve(strict=True) if args.prebuilt else None)
-    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+              args.prebuilt.resolve(strict=True) if args.prebuilt else None, args.nvapi_archive)
+    except (OSError, ValueError, KeyError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"build-runner: {error}\n")
 
 

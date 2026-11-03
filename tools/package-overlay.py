@@ -71,7 +71,7 @@ def archive_renderer(source, destination, metadata):
         raise ValueError("Renderer source manifest contains missing or extra repositories")
 
 
-def package(renderer, renderer_source, output):
+def package(renderer, renderer_source, output, nvapi_archive=None):
     if output.exists() or output.is_symlink():
         raise FileExistsError(f"Output already exists: {output}")
     metadata = json.loads((renderer / "build-info.json").read_text())
@@ -80,6 +80,7 @@ def package(renderer, renderer_source, output):
         raise ValueError("Renderer revisions differ from the validated source pins")
     if not metadata.get("normalized_build_paths"):
         raise ValueError("Use the portable renderer build with normalized compiler paths")
+    nvapi_archive = builder.nvapi.release_archive(nvapi_archive)
     source_hashes = {str(path.relative_to(ROOT)): builder.sha256(path) for path in builder.source_files()}
     subprocess.run(["make", "all"], cwd=ROOT, check=True)
     version = (ROOT / "VERSION").read_text().strip()
@@ -110,12 +111,21 @@ def package(renderer, renderer_source, output):
         shutil.copytree(renderer / "licenses", overlay / "renderer/licenses")
         archive = overlay / "renderer/source.tar.xz"
         archive_renderer(renderer_source, archive, metadata)
+        (overlay / "nvapi").mkdir()
+        shutil.copy2(nvapi_archive, overlay / "nvapi" / builder.nvapi.ARCHIVE)
+        if builder.sha256(overlay / "nvapi" / builder.nvapi.ARCHIVE) != builder.nvapi.ARCHIVE_SHA256:
+            raise ValueError("DXVK-NVAPI archive changed during packaging")
         (overlay / "release-manifest.json").write_text(json.dumps({
             "version": version,
             "base_download_sha256": builder.BASE_ARCHIVE_SHA256,
             "renderer_source_sha256": builder.sha256(archive),
             "payload": hashes,
             "renderer": metadata["files"],
+            "dxvk_nvapi": {
+                "version": builder.nvapi.VERSION,
+                "revision": builder.nvapi.REVISION,
+                "release_archive_sha256": builder.nvapi.ARCHIVE_SHA256,
+            },
         }, indent=2) + "\n")
         subprocess.run(["mv", "-T", "--no-clobber", "--", str(overlay), str(output)], check=True)
         if overlay.exists():
@@ -128,10 +138,12 @@ def main():
     parser.add_argument("--renderer", type=Path, required=True)
     parser.add_argument("--renderer-source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--nvapi-archive", type=Path,
+                        help="Use the pinned DXVK-NVAPI release archive without downloading")
     args = parser.parse_args()
     try:
         package(args.renderer.resolve(strict=True), args.renderer_source.resolve(strict=True),
-                args.output.absolute())
+                args.output.absolute(), args.nvapi_archive)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"package-overlay: {error}\n")
 

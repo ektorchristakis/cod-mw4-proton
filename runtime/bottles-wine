@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Expose MW4's Wine payload to Bottles without bypassing its campaign launcher."""
+
+import fcntl
+import importlib.machinery
+import importlib.util
+import os
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+
+
+def load_proton(adapter):
+    source = adapter / "proton-helper"
+    loader = importlib.machinery.SourceFileLoader("mw4_proton", str(source))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def campaign_arguments(arguments):
+    if not arguments:
+        return None
+    name = lambda value: value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name(arguments[0]) in ("start", "start.exe"):
+        index = 1
+        while index < len(arguments):
+            option = arguments[index].lower()
+            if option in ("/wait", "/b", "/unix"):
+                index += 1
+            elif option == "/d":
+                index += 2
+            else:
+                break
+        arguments = arguments[index:]
+    if not arguments or name(arguments[0]) != "sp26-cod.exe":
+        if any(name(value) == "sp26-cod.exe" for value in arguments):
+            raise ValueError("Launch the campaign directly; disable virtual desktop and WineBridge in Bottles.")
+        return None
+    if arguments[1:] not in ([], ["hdeyguxs3zaumvlgvybm2vyc"]):
+        raise ValueError("This runner supports the campaign's standard launch arguments only.")
+    return arguments[0]
+
+
+def force_dll_overrides(env, forced):
+    overrides = []
+    for entry in env.get("WINEDLLOVERRIDES", "").split(";"):
+        names, separator, value = entry.partition("=")
+        names = [name for name in names.split(",") if name.strip().lower() not in forced]
+        if names and names != [""]:
+            overrides.append(",".join(names) + separator + value)
+    env["WINEDLLOVERRIDES"] = ";".join([*overrides, *(f"{key}={value}" for key, value in forced.items())])
+
+
+def wine_environment(runner, environment):
+    env = environment.copy()
+    files = runner / "files"
+    libraries = [str(files / "lib/x86_64-linux-gnu"), str(files / "lib/i386-linux-gnu")]
+    if env.get("LD_LIBRARY_PATH"):
+        libraries.append(env["LD_LIBRARY_PATH"])
+    env["LD_LIBRARY_PATH"] = ":".join(libraries)
+    dlls = [str(files / "lib/vkd3d"), str(files / "lib/wine")]
+    if env.get("WINEDLLPATH"):
+        dlls.append(env["WINEDLLPATH"])
+    env["WINEDLLPATH"] = ":".join(dlls)
+    env["WINELOADER"] = str(files / "bin/wine")
+    env["WINESERVER"] = str(files / "bin/wineserver")
+    env.setdefault("XLOCALEDIR", str(files / "share/X11/locale"))
+    # The patched PE files are native DLLs, including during bottle creation.
+    force_dll_overrides(env, {"msvcrt": "n,b", "winhttp": "n,b"})
+    return env
+
+
+def replace_prefix_dll(source, destination, prefix):
+    if not destination.parent.resolve().is_relative_to(prefix):
+        raise ValueError("The bottle's Windows directory points outside its prefix.")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Replacing the directory entry breaks old runner symlinks safely.
+    with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".mw4-", delete=False) as stream:
+        temporary = Path(stream.name)
+    try:
+        shutil.copy2(source, temporary)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def install_patched_dlls(runner, prefix):
+    # Wine cannot initialize a fresh prefix with a builtin placeholder for these
+    # private DLLs. Seed the real files before wineboot populates the directory.
+    for name in ("msvcrt.dll", "winhttp.dll"):
+        replace_prefix_dll(runner / "files/lib/wine/x86_64-windows" / name,
+                           prefix / "drive_c/windows/system32" / name, prefix)
+
+
+def install_campaign_dlls(runner, prefix):
+    windows = prefix / "drive_c/windows"
+    system32 = windows / "system32"
+    if not system32.is_dir():
+        raise ValueError("Create a 64-bit bottle before starting the campaign.")
+    sources = {
+        "d3d12.dll": "vkd3d-proton/x86_64-windows/d3d12.dll",
+        "d3d12core.dll": "vkd3d-proton/x86_64-windows/d3d12core.dll",
+        "dxgi.dll": "dxvk/x86_64-windows/dxgi.dll",
+        "d3d11.dll": "dxvk/x86_64-windows/d3d11.dll",
+        "d3d10core.dll": "dxvk/x86_64-windows/d3d10core.dll",
+        "nvapi64.dll": "nvapi/x86_64-windows/nvapi64.dll",
+        "nvofapi64.dll": "nvapi/x86_64-windows/nvofapi64.dll",
+    }
+    copies = [(runner / "files/lib/wine" / source, system32 / name)
+              for name, source in sources.items()]
+    if (windows / "syswow64").is_dir():
+        copies.append((runner / "files/lib/wine/nvapi/i386-windows/nvapi.dll",
+                       windows / "syswow64/nvapi.dll"))
+    for source, destination in copies:
+        replace_prefix_dll(source, destination, prefix)
+
+
+def main():
+    adapter = Path(__file__).resolve().parents[2]
+    try:
+        runner = Path((adapter / "runner-path").read_text().strip()).resolve(strict=True)
+        arguments = sys.argv[1:]
+        env = wine_environment(runner, os.environ)
+        wine = str(runner / "files/bin/wine")
+        game = campaign_arguments(arguments)
+        proton = load_proton(adapter)
+        affinity = proton.campaign_topology(env)
+        if env.get("WINEARCH") == "win32":
+            raise ValueError("This runner needs a 64-bit bottle.")
+        if game is None:
+            if env.get("WINEPREFIX") and arguments not in (["--version"], ["--help"], ["-h"]):
+                install_patched_dlls(runner, Path(env["WINEPREFIX"]).resolve())
+            if affinity is not None:
+                os.sched_setaffinity(0, affinity)
+            os.execve(wine, [wine, *arguments], env)
+        if not env.get("WINEPREFIX"):
+            raise ValueError("Start this runner through Bottles with a dedicated 64-bit bottle.")
+        prefix = Path(env["WINEPREFIX"]).resolve(strict=True)
+        with (prefix.parent / (prefix.name + ".mw4.lock")).open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ValueError("Modern Warfare 4 is already running in this prefix.") from None
+            install_patched_dlls(runner, prefix)
+            install_campaign_dlls(runner, prefix)
+            forced = {"msvcrt": "n,b", "winhttp": "n,b", "dbghelp": "n,b",
+                      "d3d12": "n", "d3d12core": "n", "dxgi": "n", "d3d11": "n",
+                      "d3d10core": "n", "nvapi": "n", "nvapi64": "n", "nvofapi64": "n"}
+            force_dll_overrides(env, forced)
+            env["WINE_DISABLE_EXE_ASLR"] = "1"
+            env["DXVK_ENABLE_NVAPI"] = "1"
+            env["DXVK_NVAPIHACK"] = "0"
+            layers = runner / "files/share/dxvk-nvapi-vkreflex-layer/implicit_layer.d"
+            env["VK_IMPLICIT_LAYER_PATH"] = str(layers) + (":" + env["VK_IMPLICIT_LAYER_PATH"]
+                                                        if env.get("VK_IMPLICIT_LAYER_PATH") else "")
+            share = runner / "files/share/mw4"
+            command = [wine, str(share / "controller.exe"), "game",
+                       proton.windows_path(share / "randgrid.sys"), r"C:\mw4-launch.log",
+                       proton.windows_path(game)]
+            return proton.run_campaign(command, env, lock, prefix, runner, affinity)
+    except (OSError, ValueError) as error:
+        print(f"MW4-Bottles: {error}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

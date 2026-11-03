@@ -37,6 +37,7 @@ def main():
             raise FileExistsError(f"Output already exists: {args.output}")
         if not (ROOT / "payload/manifest.json").is_file():
             raise ValueError("Run this installer from a packaged release overlay")
+        nvapi_archive = builder.nvapi.release_archive(ROOT / "nvapi" / builder.nvapi.ARCHIVE)
         if args.base_runner:
             base = args.base_runner.resolve(strict=True)
         else:
@@ -62,9 +63,9 @@ def main():
                 with tarfile.open(archive, "r:gz") as package:
                     package.extractall(directory, filter="data")
                 base = Path(directory) / "GE-Proton11-11-x86_64"
-                builder.build(base, ROOT / "renderer", args.output.absolute(), ROOT / "payload")
+                builder.build(base, ROOT / "renderer", args.output.absolute(), ROOT / "payload", nvapi_archive)
                 return 0
-        builder.build(base, ROOT / "renderer", args.output.absolute(), ROOT / "payload")
+        builder.build(base, ROOT / "renderer", args.output.absolute(), ROOT / "payload", nvapi_archive)
     except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"install-runner: {error}\n")
     return 0
