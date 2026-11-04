@@ -56,6 +56,14 @@ git -C "$dxil_dir" fetch --depth 1 origin "$dxil_revision"
 git -C "$dxil_dir" checkout --detach "$dxil_revision"
 git -C "$dxil_dir" submodule update --init --recursive --depth 1
 
+patch_file="$repo_dir/patches/vkd3d-aligned-heaps.patch"
+git -C "$source_dir" apply --check "$patch_file"
+git -C "$source_dir" apply "$patch_file"
+restore_source() {
+    git -C "$source_dir" apply --reverse "$patch_file"
+}
+trap restore_source EXIT
+
 sysroot="$(realpath -m -- "$(x86_64-w64-mingw32-g++ -print-sysroot)")"
 prefix_args="$(python3 - "$work_dir" "$sysroot" <<'PY'
 import json
@@ -90,7 +98,7 @@ install -Dm644 "$dxil_dir/subprojects/dxbc-spirv/LICENSE" "$output_dir/licenses/
 install -Dm644 "$source_dir/khronos/Vulkan-Headers/LICENSE.md" "$output_dir/licenses/Vulkan-Headers-LICENSE.md"
 install -Dm644 "$source_dir/khronos/SPIRV-Headers/LICENSE" "$output_dir/licenses/SPIRV-Headers-LICENSE"
 
-python3 - "$output_dir" "$source_dir" "$vkd3d_revision" "$dxil_revision" <<'PY'
+python3 - "$output_dir" "$source_dir" "$vkd3d_revision" "$dxil_revision" "$patch_file" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -108,7 +116,8 @@ metadata = {
     "strip_debug": True,
     "normalized_build_paths": True,
     "insert_pe_timestamp": False,
-    "local_source_patches": [],
+    "local_source_patches": [{"name": Path(sys.argv[5]).name,
+                              "sha256": hashlib.sha256(Path(sys.argv[5]).read_bytes()).hexdigest()}],
     "submodules": {line.split()[1]: line.split()[0].lstrip(" +-")
                    for line in submodules.splitlines()},
     "files": {str(path.relative_to(output)): hashlib.sha256(path.read_bytes()).hexdigest()
