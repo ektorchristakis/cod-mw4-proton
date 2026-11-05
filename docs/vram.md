@@ -16,6 +16,20 @@ other systems. Pool free space can be reused by compatible allocations; it is
 not necessarily a leak. The in-game VRAM figure is an estimate and its exact
 calculation has not been established here.
 
+The tested game build queries DXGI's LOCAL memory budget and current usage and
+uses them in its internal memory accounting. In a diagnostic run, a separate
+1,540 MiB Vulkan allocation reduced the reported budget by about 1.5 GiB; the
+budget recovered when that allocation ended. The settings screen nevertheless
+showed `Other Apps: 0 GB`, including after reopening it while the allocation was
+active. The source of that display value is unresolved. Do not use it as a
+measure of other processes' VRAM use. DXGI describes the budget as a target and
+the usage as the process's current usage; exceeding the budget can cause
+stuttering. See Microsoft's [memory information reference](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_4/ns-dxgi1_4-dxgi_query_video_memory_info).
+
+The pinned DXVK-NVAPI implementation reports available memory from the DXGI
+budget and usage, but its eviction and promotion counters are zero rather than
+measured values. See the [upstream implementation](https://github.com/jp7677/dxvk-nvapi/blob/v0.9.3/src/nvapi_gpu.cpp). These observations do not establish that every game memory statistic or decision matches Windows.
+
 The patch increases the number of Vulkan memory allocations. Long sessions,
 other hardware and drivers, other campaign areas, and Steam and Bottles launches
 need further testing. This project supports the campaign only; multiplayer and
