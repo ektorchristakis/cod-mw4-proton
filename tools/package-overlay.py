@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package our runtime additions and renderer sources, without GE binaries."""
+"""Package runtime additions and rebuilt graphics sources without the GE base."""
 
 import argparse
 import importlib.util
@@ -62,7 +62,12 @@ def archive_renderer(source, destination, metadata):
 
     with tarfile.open(destination, "w:xz") as archive:
         add_repository(source, Path(), archive)
-        data = (json.dumps({"repositories": archived_repositories}, indent=2) + "\n").encode()
+        patch = ROOT / "patches/vkd3d-aligned-heaps.patch"
+        if builder.sha256(patch) != metadata["local_source_patches"][0]["sha256"]:
+            raise ValueError("Renderer patch changed during packaging")
+        archive.add(patch, arcname="MW4-PATCHES/" + patch.name, recursive=False, filter=normalize)
+        data = (json.dumps({"repositories": archived_repositories,
+                            "local_source_patches": metadata["local_source_patches"]}, indent=2) + "\n").encode()
         info = normalize(tarfile.TarInfo("SOURCE-MANIFEST.json"))
         info.size = len(data)
         info.mode = 0o644
@@ -71,15 +76,16 @@ def archive_renderer(source, destination, metadata):
         raise ValueError("Renderer source manifest contains missing or extra repositories")
 
 
-def package(renderer, renderer_source, output, nvapi_archive=None):
+def package(renderer, renderer_source, dxgi, dxgi_source, output, nvapi_archive=None):
     if output.exists() or output.is_symlink():
         raise FileExistsError(f"Output already exists: {output}")
     metadata = json.loads((renderer / "build-info.json").read_text())
-    if (metadata.get("vkd3d_proton") != builder.VKD3D_REVISION or
-            metadata.get("dxil_spirv") != builder.DXIL_REVISION):
-        raise ValueError("Renderer revisions differ from the validated source pins")
+    builder.check_renderer_metadata(metadata)
     if not metadata.get("normalized_build_paths"):
         raise ValueError("Use the portable renderer build with normalized compiler paths")
+    dxgi_metadata = builder.dxgi.check_build(dxgi)
+    if builder.dxgi.check_source(dxgi_source) != dxgi_metadata.get("submodules"):
+        raise ValueError("DXGI source does not match its build manifest")
     nvapi_archive = builder.nvapi.release_archive(nvapi_archive)
     source_hashes = {str(path.relative_to(ROOT)): builder.sha256(path) for path in builder.source_files()}
     subprocess.run(["make", "all"], cwd=ROOT, check=True)
@@ -111,6 +117,13 @@ def package(renderer, renderer_source, output, nvapi_archive=None):
         shutil.copytree(renderer / "licenses", overlay / "renderer/licenses")
         archive = overlay / "renderer/source.tar.xz"
         archive_renderer(renderer_source, archive, metadata)
+        for relative in (*dxgi_metadata["files"], "build-info.json"):
+            destination = overlay / "dxgi" / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(dxgi / relative, destination)
+        builder.dxgi.check_build(overlay / "dxgi")
+        dxgi_archive = overlay / "dxgi/source.tar.xz"
+        builder.dxgi.archive_source(dxgi_source, dxgi, dxgi_archive)
         (overlay / "nvapi").mkdir()
         shutil.copy2(nvapi_archive, overlay / "nvapi" / builder.nvapi.ARCHIVE)
         if builder.sha256(overlay / "nvapi" / builder.nvapi.ARCHIVE) != builder.nvapi.ARCHIVE_SHA256:
@@ -121,6 +134,10 @@ def package(renderer, renderer_source, output, nvapi_archive=None):
             "renderer_source_sha256": builder.sha256(archive),
             "payload": hashes,
             "renderer": metadata["files"],
+            "dxgi": {"dxvk": builder.dxgi.REVISION, "ge_proton": builder.dxgi.GE_REVISION,
+                     "source_patch_sha256": builder.dxgi.PREPARED_PATCH_SHA256,
+                     "files": dxgi_metadata["files"],
+                     "source_archive_sha256": builder.sha256(dxgi_archive)},
             "dxvk_nvapi": {
                 "version": builder.nvapi.VERSION,
                 "revision": builder.nvapi.REVISION,
@@ -137,12 +154,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--renderer", type=Path, required=True)
     parser.add_argument("--renderer-source", type=Path, required=True)
+    parser.add_argument("--dxgi", type=Path, required=True)
+    parser.add_argument("--dxgi-source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--nvapi-archive", type=Path,
                         help="Use the pinned DXVK-NVAPI release archive without downloading")
     args = parser.parse_args()
     try:
         package(args.renderer.resolve(strict=True), args.renderer_source.resolve(strict=True),
+                args.dxgi.resolve(strict=True), args.dxgi_source.resolve(strict=True),
                 args.output.absolute(), args.nvapi_archive)
     except (OSError, ValueError, KeyError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"package-overlay: {error}\n")

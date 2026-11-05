@@ -63,9 +63,11 @@ def main():
                 with tarfile.open(archive, "r:gz") as package:
                     package.extractall(directory, filter="data")
                 base = Path(directory) / "GE-Proton11-11-x86_64"
-                builder.build(base, ROOT / "renderer", args.output.absolute(), ROOT / "payload", nvapi_archive)
+                builder.build(base, ROOT / "renderer", ROOT / "dxgi", args.output.absolute(),
+                              ROOT / "payload", nvapi_archive)
                 return 0
-        builder.build(base, ROOT / "renderer", args.output.absolute(), ROOT / "payload", nvapi_archive)
+        builder.build(base, ROOT / "renderer", ROOT / "dxgi", args.output.absolute(),
+                      ROOT / "payload", nvapi_archive)
     except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"install-runner: {error}\n")
     return 0

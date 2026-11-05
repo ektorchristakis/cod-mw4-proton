@@ -1,14 +1,65 @@
 # Validation
 
-The cutoff record below is retained from the [published beta](https://github.com/ektorchristakis/cod-mw4-proton/blob/v0.1.0-beta.1/docs/validation.md). Later observations on `main` are recorded [separately below](#post-beta-observations-2026-11-03); they do not alter that release or its original testing record.
+This page separates the current beta.3 checks from the retained beta.1/beta.2 observations. A built or API-tested runtime, a visible menu, a private diagnostic comparison and actual gameplay are different evidence. Each result below is limited to the recorded artifact and session.
+
+## Beta.3 validation
+
+Record for the 6 GiB RTX 3060 Laptop test host. Beta.3 includes both the aligned-heap renderer patch and the budget-only x64 DXGI DLL, SHA-256 `f3b1dccd1b6d7471b5e72c66ecdbfcf24f2ef07f9804f4616a229199c468b9a0`. The latter was built from the pinned GE-prepared DXVK source without the private diagnostic logging used in earlier comparisons. Final archive identity is established by the release's published `SHA256SUMS` and manifests; a provisional overlay hash is not a published-release identity.
+
+### Aligned heaps and external memory pressure
+
+A private instrumented checkpoint comparison found 4,688 MiB in 16 MiB device-local pools containing about 208 MiB of live suballocations. With the aligned-heap patch, that class of pool fell to 32 MiB. In a later 31-minute direct Wine session using a clean build of the patch, NVIDIA reported 4,615–4,743 MiB used on the GPU; the player also reported better performance. Most of that measured interval was stationary. The clean build used for that session is not byte-identical to the renderer produced by the public Git build recipe, which has a different shader-cache identity. These observations do not prove that allocations cannot grow or that all campaign scenes sustain 30 FPS. See [VRAM allocation](vram.md) for the tradeoff.
+
+The Git-built release candidate's `d3d12core.dll` has SHA-256 `0371337bfc9363c7b52a3d2e3865cd897dea5542ba2699bd90efee4804ac8d3d`. In a separate visible UMU session, its installed prefix DLL matched that hash, Resume loaded the existing Stranded checkpoint, and brief movement was observed. The pause screen showed the SAM site objective. Over 313 GPU-memory samples spanning about 11 minutes, usage rose from 3,452 MiB to 4,647 MiB as the scene loaded and then stayed near that value; most of the observation was stationary. The game exited with code zero. The first load followed a renderer change and shader-cache invalidation. These checks do not qualify later missions, cinematics with this renderer, a stable frame-rate floor or long-term memory behavior.
+
+In a separate diagnostic run, an independent Vulkan process used 1,540 MiB while the game's settings page still showed `Other Apps: 0 GB`. During that load, the game's queried DXGI LOCAL budget decreased by about 1.5 GiB and returned after the process exited. A repeat with the normal direct Wine launcher still showed zero after reopening the settings page while the 1,540 MiB allocation was active. The label is therefore misleading in this setup, even though that budget responded to external pressure. The source of the displayed value and the game's use of the information are not established; the runner does not claim to fix the label.
+
+### Build, package and API checks
+
+The fresh Git recipe built that DXGI DLL. The host suite passed 41 tests with the aligned-heap packaging and installed-runner checks included. A staging overlay was installed offline over the existing extracted GE base, and its installed renderer and DXGI hashes matched the candidate DLLs. The installed manifest, inherited x86 DXGI, source archives and notices were verified in staging. This establishes those source/package/runtime inputs, not campaign performance. The exported-source offline rebuild recipe has not been run.
+
+Five API cases used the staged core through UMU in a fresh, dedicated prefix with the actual game closed. The probe loaded the identified DLL from that prefix's `system32`. The raw LOCAL budget was `6072696832` bytes. Limits of 5120, 4096 and 1 MiB capped the reported LOCAL budget; zero and 8192 MiB retained the lower raw budget. NON_LOCAL reporting was unchanged. The probe allocated no game workload and its usage value was zero. Source inspection establishes that the patch leaves the existing usage calculation untouched; these cases are not a residency, over-budget usage or sustained memory-pressure test.
+
+### Earlier budget-only candidate coverage
+
+The identified DXGI DLL was used through UMU with the earlier, unpatched renderer, from the original NTFS game installation with the existing dedicated campaign prefix. With `dxgi.maxDeviceMemory = 5120`, Resume loaded the existing checkpoint. Walking, strafing, aim and camera movement responded during focused input checks. Advancing video and subtitles were observed in Mayhem and Out in the Cold; Kin Punishment video advanced and responded to pause before returning to the gallery. A Mute Game When Minimized setting was toggled and restored. Master volume remained zero. A clean Quit to Desktop was requested and the game process exited. This does not qualify the final renderer build.
+
+The two public-binary memory-budget trials used the same identified DLL, with no graphics-quality changes recorded:
+
+| Reported limit | Approximately 1 Hz counter samples | Median displayed FPS | Range | Samples below 30 | Final 120-sample mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 5120 MiB, wider view | 900 | 32 | 19–33 | 156 | 27.49 |
+| 4096 MiB | 1000 | 13 | 11–34 | 951 | 13 |
+
+The 5120 MiB sample covered about 15 minutes and ended in the mid-20s with drops. The 4096 MiB trial deteriorated to sustained readings around 13 FPS and was stopped; it is not a recommended setting. These are sampled in-game counter readings, not frame-time measurements, frame counts or 1% lows. The trials do not establish a controlled causal improvement, identical resolved texture quality or a stable 30 FPS floor. The user recalls similar fluctuations on Windows, but saved Windows settings differed in shadows and screen-space reflections, and no matched Windows baseline was measured. The cause of the slowdown remains unresolved.
+
+These earlier campaign trials used positive limits and the unpatched renderer; the later aligned-heap checkpoint check above used the default zero limit. Earlier Steam/Bottles beta.2 client results remain specific to those labelled sessions and do not qualify beta.3 play through those clients. Later missions, full campaign completion, sustained representative performance, audible output and quality, other GPU/runtime combinations and an ongoing Windows/Linux save roundtrip remain unqualified.
+
+### Private diagnostic motivation
+
+The following earlier observations used private diagnostic DLLs, not the budget-only DXGI DLL identified above. They motivated the optional setting and do not qualify the release candidate's sustained gameplay.
+
+| Private observation | Approximately 1 Hz counter samples | Median displayed FPS | Samples below 30 |
+| --- | ---: | ---: | ---: |
+| GE-prepared logging-only control | 455 | 16 | 368 |
+| GE-prepared budget candidate | 660 | 41 | 16 |
+| Additional wider candidate view | 360 | 32 | 33 |
+
+The candidate minima were 23 FPS in the first view and 17 in the wider view. These were sampled in-game counter readings, not frame times, frame counts or 1% low measurements. The control sampling began 4 minutes 9 seconds after launch and candidate sampling 9 minutes 8 seconds after launch. The runs were sequential, with launch-age and warm-cache confounds; checkpoint bytes differed despite the same initial scene and position. The wider workload had no matched control. Inputs were given every ten seconds to limit the 30-second idle-quality confound during those private trials.
+
+Settings files were byte-identical before and after, but identical resolved textures or mip levels were not established. Physical VRAM remained approximately full at 5854/5857 MiB. These observations do not establish a physical memory cap, reclaimed VRAM, identical rendered quality, a 30 FPS floor, a general fix or a controlled causal performance effect. The manually selected 5120 MiB value is not a qualified profile for other GPUs. A later user-controlled run with private instrumented components also exhibited large drops. It was not a qualification run of the public beta.3 binary.
+
+## Historical beta.1 cutoff record
+
+The cutoff record below is retained from the [published beta.1](https://github.com/ektorchristakis/cod-mw4-proton/blob/v0.1.0-beta.1/docs/validation.md). Later [post-beta observations](#post-beta-observations-2026-11-03) and [beta.2 launcher checks](#beta2-launcher-checks) remain separately labelled. They do not alter those releases or the original cutoff record.
 
 Tested on 2026-11-02 with Fedora 44, GNOME 50.6, an NVIDIA RTX 3060 Laptop GPU with 6 GiB VRAM, and NVIDIA driver 615.78.08. The runner uses GE-Proton 11-11, UMU 1.4.4, and Steam Runtime 4.
 
-## Beta status
+### Beta.1 cutoff status
 
-This is `0.1.0-beta.1`, an experimental prerelease published with incomplete testing. The results below describe specific observed sessions, not full campaign, performance, installation, audio-quality, account-safety, or multiplayer qualification.
+The following cutoff record describes `0.1.0-beta.1`, an experimental prerelease published with incomplete testing. The results below describe specific observed sessions, not full campaign, performance, installation, audio-quality, account-safety, or multiplayer qualification.
 
-## Runtime probes
+### Runtime probes
 
 An empty, dedicated prefix was initialized using an assembled pre-beta MW4-Proton runner. All six probe processes exited successfully:
 
@@ -23,7 +74,7 @@ An empty, dedicated prefix was initialized using an assembled pre-beta MW4-Proto
 
 The installed msvcrt, ntdll, and WinHTTP hashes matched that pre-beta runner. After the packaging repairs, the host test suite passed twelve tests, including the original-driver protocol vector, wrapper routing, prefix locking through shutdown, and sparse CPU topology mapping.
 
-## Campaign coverage
+### Campaign coverage
 
 Support covers the single-player campaign only. Multiplayer and online modes are unsupported.
 
@@ -37,7 +88,7 @@ The game selected 7.1 Surround and the configured local Linux audio device expos
 
 A local desktop launcher was installed and its configuration check passed. Launching the game by activating that desktop entry had not been verified at the cutoff. The portable release documents Steam and UMU setup; it does not ship or qualify that machine's desktop entry.
 
-## Remaining checks
+### Remaining checks
 
 Automatic-topology checkpoint completion, comparable-settings performance, desktop activation, audible channel quality, later missions, and full campaign completion remain unqualified. Steam and UMU integration beyond the recorded sessions and hardware has not been broadly tested. Multiplayer and online modes are unsupported; no account or ban-safety guarantee is made.
 

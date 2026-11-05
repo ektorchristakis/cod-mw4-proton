@@ -22,6 +22,9 @@ spec.loader.exec_module(nvapi)
 spec = importlib.util.spec_from_file_location("runner_files", ROOT / "tools/runner_files.py")
 runner_files = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(runner_files)
+spec = importlib.util.spec_from_file_location("dxgi", ROOT / "tools/build-dxgi.py")
+dxgi = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(dxgi)
 BASE_NAME = "GE-Proton11-11"
 BASE_REVISION = "c0c2ee35e6d4d3bff4d39c6246ac46636434feb8"
 BASE_ARCHIVE_SHA256 = "aa85986cada5709aa8bbfa8add7f3bfb925cbe15710c98995898d308ff2ca3c1"
@@ -39,6 +42,16 @@ BASE_HASHES = {
 def sha256(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def check_renderer_metadata(metadata):
+    if (not isinstance(metadata, dict) or metadata.get("vkd3d_proton") != VKD3D_REVISION or
+            metadata.get("dxil_spirv") != DXIL_REVISION):
+        raise ValueError("Renderer revisions differ from the validated source pins")
+    patch = ROOT / "patches/vkd3d-aligned-heaps.patch"
+    expected = [{"name": patch.name, "sha256": sha256(patch)}]
+    if metadata.get("local_source_patches") != expected:
+        raise ValueError("Renderer does not include the required aligned-heap patch")
 
 
 def source_files():
@@ -65,9 +78,7 @@ def check_inputs(base, renderer):
     if not re.search(r'"require_tool_appid"\s+"4183110"', toolmanifest):
         raise ValueError("The base runner does not select the expected Steam runtime")
     metadata = json.loads((renderer / "build-info.json").read_text())
-    if (metadata.get("vkd3d_proton") != VKD3D_REVISION or
-            metadata.get("dxil_spirv") != DXIL_REVISION):
-        raise ValueError("Renderer revisions differ from the validated source pins")
+    check_renderer_metadata(metadata)
     renderer_hashes = {}
     for name in ("d3d12.dll", "d3d12core.dll"):
         relative = f"x64/{name}"
@@ -84,19 +95,29 @@ def check_installed_runner(runner):
     manifest = json.loads((runner / "files/share/mw4/manifest.json").read_text())
     if not isinstance(manifest, dict) or manifest.get("version") != version:
         raise ValueError(f"Expected an assembled MW4-Proton {version} runner")
+    check_renderer_metadata(manifest.get("renderer"))
     metadata = manifest.get("dxvk_nvapi")
     if (not isinstance(metadata, dict) or metadata.get("version") != nvapi.VERSION or
             metadata.get("revision") != nvapi.REVISION or
             metadata.get("release_archive_sha256") != nvapi.ARCHIVE_SHA256):
         raise ValueError("Runner does not contain the pinned DXVK-NVAPI release")
+    dxgi.check_metadata(manifest.get("dxgi", {}))
     files = manifest.get("files")
     required = {str(WINE_DLLS / name) for name in BASE_HASHES}
     required.update(str(RENDERER_DLLS / name) for name in ("d3d12.dll", "d3d12core.dll"))
     required.update(nvapi.FILES.values())
+    required.add(dxgi.DESTINATION)
+    required.update("files/share/mw4/dxgi/" + relative for relative in dxgi.BUILD_FILES
+                    if relative != "x64/dxgi.dll")
+    required.add("files/share/mw4/dxgi/build-info.json")
     required.update(("proton", "proton-base", "version", "compatibilitytool.vdf",
                      "files/share/mw4/controller.exe", "files/share/mw4/randgrid.sys"))
     if not isinstance(files, dict) or not required.issubset(files):
         raise ValueError("Runner manifest is missing installed components")
+    for relative, expected in manifest["dxgi"]["files"].items():
+        installed = dxgi.DESTINATION if relative == "x64/dxgi.dll" else "files/share/mw4/dxgi/" + relative
+        if files.get(installed) != expected:
+            raise ValueError(f"Runner DXGI manifest mismatch: {relative}")
     for relative, expected in files.items():
         path = Path(relative)
         if path.is_absolute() or ".." in path.parts or sha256(runner / path) != expected:
@@ -113,18 +134,19 @@ def check_installed_runner(runner):
     return runner
 
 
-def build(base, renderer, output, prebuilt=None, nvapi_archive=None):
+def build(base, renderer, dxgi_build, output, prebuilt=None, nvapi_archive=None):
     output = Path(os.path.abspath(output))
     output = output.parent.resolve() / output.name
     if output.exists() or output.is_symlink():
         raise FileExistsError(f"Output already exists: {output}")
-    if output.is_relative_to(base) or output.is_relative_to(renderer):
-        raise ValueError("Output must be outside both input directories")
+    if any(output.is_relative_to(directory) for directory in (base, renderer, dxgi_build)):
+        raise ValueError("Output must be outside the input directories")
     version = (ROOT / "VERSION").read_text().strip()
     if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
         raise ValueError("VERSION must contain a semantic version")
     name = f"MW4-Proton-{version}"
     stamp, renderer_hashes = check_inputs(base, renderer)
+    dxgi_metadata = dxgi.check_build(dxgi_build)
     nvapi_archive = nvapi.release_archive(nvapi_archive)
     sources = {str(path.relative_to(ROOT)): sha256(path) for path in source_files()}
     binaries = ROOT / "build"
@@ -148,6 +170,10 @@ def build(base, renderer, output, prebuilt=None, nvapi_archive=None):
         destinations = [WINE_DLLS / dll for dll in BASE_HASHES]
         destinations.extend(RENDERER_DLLS / dll for dll in renderer_hashes)
         destinations.extend(map(Path, nvapi.FILES.values()))
+        destinations.append(Path(dxgi.DESTINATION))
+        destinations.extend(Path("files/share/mw4/dxgi") / relative
+                            for relative in (*dxgi_metadata["files"], "build-info.json")
+                            if relative != "x64/dxgi.dll")
         destinations.extend(Path("files/share/mw4") / name for name in
                             ("controller.exe", "randgrid.sys", "manifest.json", "manifests/msvcrt.json",
                              "manifests/ntdll.json", "manifests/winhttp.json", "licenses/renderer/LICENSE"))
@@ -186,6 +212,15 @@ def build(base, renderer, output, prebuilt=None, nvapi_archive=None):
         for dll in renderer_hashes:
             runner_files.replace_file(renderer / "x64" / dll, runner / RENDERER_DLLS / dll, runner)
             changed.append(RENDERER_DLLS / dll)
+        dxgi.check_build(dxgi_build)
+        runner_files.replace_file(dxgi_build / "x64/dxgi.dll", runner / dxgi.DESTINATION, runner)
+        changed.append(Path(dxgi.DESTINATION))
+        for relative in (*dxgi_metadata["files"], "build-info.json"):
+            if relative == "x64/dxgi.dll":
+                continue
+            destination = Path("files/share/mw4/dxgi") / relative
+            runner_files.replace_file(dxgi_build / relative, runner / destination, runner)
+            changed.append(destination)
         nvapi_metadata = nvapi.install(nvapi_archive, runner)
         changed.extend(map(Path, nvapi.FILES.values()))
         for filename in ("controller.exe", "randgrid.sys"):
@@ -226,8 +261,10 @@ def build(base, renderer, output, prebuilt=None, nvapi_archive=None):
                 "release_archive_sha256": BASE_ARCHIVE_SHA256,
                 "inputs": {str(WINE_DLLS / dll): digest for dll, digest in BASE_HASHES.items()},
             },
-            "renderer": {"vkd3d_proton": VKD3D_REVISION, "dxil_spirv": DXIL_REVISION},
+            "renderer": {"vkd3d_proton": VKD3D_REVISION, "dxil_spirv": DXIL_REVISION,
+                         "local_source_patches": json.loads((renderer / "build-info.json").read_text())["local_source_patches"]},
             "dxvk_nvapi": nvapi_metadata,
+            "dxgi": dxgi_metadata,
             "source_files": sources,
             "files": {str(path): sha256(runner / path) for path in sorted(changed)},
             "toolmanifest_sha256": sha256(runner / "toolmanifest.vdf"),
@@ -243,6 +280,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-runner", type=Path, required=True)
     parser.add_argument("--renderer", type=Path, required=True)
+    parser.add_argument("--dxgi", type=Path, required=True,
+                        help="Pinned GE-prepared x64 DXGI build from tools/build-dxgi.py")
     parser.add_argument("--output", type=Path, required=True,
                         help="New runner directory, e.g. dist/MW4-Proton-0.1.0")
     parser.add_argument("--prebuilt", type=Path,
@@ -253,7 +292,8 @@ def main():
     try:
         output = Path(os.path.abspath(args.output))
         output = output.parent.resolve() / output.name
-        build(args.base_runner.resolve(strict=True), args.renderer.resolve(strict=True), output,
+        build(args.base_runner.resolve(strict=True), args.renderer.resolve(strict=True),
+              args.dxgi.resolve(strict=True), output,
               args.prebuilt.resolve(strict=True) if args.prebuilt else None, args.nvapi_archive)
     except (OSError, ValueError, KeyError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"build-runner: {error}\n")

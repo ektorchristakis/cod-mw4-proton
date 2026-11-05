@@ -19,6 +19,10 @@ class SteamInstallTest(unittest.TestCase):
         required = {str(steam.builder.WINE_DLLS / name) for name in steam.builder.BASE_HASHES}
         required.update(str(steam.builder.RENDERER_DLLS / name) for name in ("d3d12.dll", "d3d12core.dll"))
         required.update(steam.builder.nvapi.FILES.values())
+        required.add(steam.builder.dxgi.DESTINATION)
+        required.update("files/share/mw4/dxgi/" + relative for relative in steam.builder.dxgi.BUILD_FILES
+                        if relative != "x64/dxgi.dll")
+        required.add("files/share/mw4/dxgi/build-info.json")
         required.update(("proton", "proton-base", "version", "compatibilitytool.vdf", "files/share/mw4/controller.exe", "files/share/mw4/randgrid.sys"))
         hashes = {}
         for relative in required:
@@ -35,9 +39,34 @@ class SteamInstallTest(unittest.TestCase):
         toolmanifest.write_text('"manifest" { "require_tool_appid" "4183110" }\n')
         manifest = {"version": VERSION, "dxvk_nvapi": {"version": steam.builder.nvapi.VERSION, "revision": steam.builder.nvapi.REVISION, "release_archive_sha256": steam.builder.nvapi.ARCHIVE_SHA256}, "files": hashes,
                     "toolmanifest_sha256": hashlib.sha256(toolmanifest.read_bytes()).hexdigest()}
+        patch_path = ROOT / "patches/vkd3d-aligned-heaps.patch"
+        manifest["renderer"] = {"vkd3d_proton": steam.builder.VKD3D_REVISION,
+                                "dxil_spirv": steam.builder.DXIL_REVISION,
+                                "local_source_patches": [{"name": patch_path.name,
+                                                          "sha256": steam.builder.sha256(patch_path)}]}
+        dxgi = steam.builder.dxgi
+        manifest["dxgi"] = {
+            "dxvk": dxgi.REVISION, "ge_proton": dxgi.GE_REVISION,
+            "source_patch_sha256": dxgi.PREPARED_PATCH_SHA256,
+            "budget_patch_sha256": dxgi.BUDGET_PATCH_SHA256,
+            "normalized_build_paths": True, "insert_pe_timestamp": False,
+            "buildtype": "release",
+            "files": {relative: hashes[dxgi.DESTINATION if relative == "x64/dxgi.dll"
+                                       else "files/share/mw4/dxgi/" + relative]
+                      for relative in dxgi.BUILD_FILES},
+        }
         record = runner / "files/share/mw4/manifest.json"
         record.write_text(json.dumps(manifest))
         return manifest, record
+
+    def test_reuse_rejects_runner_without_aligned_heap_patch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runner = Path(directory) / "runner"
+            manifest, record = self.assembled_fixture(runner)
+            manifest["renderer"]["local_source_patches"] = []
+            record.write_text(json.dumps(manifest))
+            with self.assertRaisesRegex(ValueError, "aligned-heap"):
+                steam.builder.check_installed_runner(runner)
 
     def test_detects_native_and_flatpak_roots_and_deduplicates_links(self):
         with tempfile.TemporaryDirectory() as directory:

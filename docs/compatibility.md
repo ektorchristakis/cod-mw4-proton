@@ -42,6 +42,34 @@ Version `0.1.0-beta.2` replaces GE-Proton 11-11's DXVK-NVAPI 0.9.2 components wi
 
 This dependency correction does not establish the cause of every slowdown or demonstrate a sustained frame rate. The [validation record](validation.md#beta2-launcher-checks) distinguishes launcher observations from gameplay and performance qualification.
 
+## DXGI memory budget
+
+Beta.3 extends DXVK's existing `dxgi.maxDeviceMemory` option to cap the LOCAL budget returned by `IDXGIAdapter3::QueryVideoMemoryInfo` in the x64 DXGI component. Upstream uses the option for adapter descriptions alone. With a positive limit, the modified query returns the smaller of the driver budget and that limit. The code leaves the actual-usage calculation and NON_LOCAL reporting unchanged. This is an advisory report to the game, not an allocation, residency or physical VRAM limit.
+
+The option's upstream default remains `0`. If an existing environment value or DXVK configuration file already sets a nonzero value, beta.3 also applies that value to the new LOCAL report. No hardware profile is chosen automatically. The manually selected `5120` and `4096` MiB values were investigated on one RTX 3060 Laptop GPU with 6 GiB VRAM. The 5120 MiB trial had drops and ended in the mid-20s; 4096 MiB deteriorated to about 13 FPS. Neither is a recommended performance preset or a demonstrated stable-30 fix. Other GPUs remain unqualified. See [beta.3 validation](validation.md#beta3-validation) for the distinction between API behavior and gameplay evidence.
+
+Before changing the setting, retain the original `DXVK_CONFIG` value, if any. With no existing options, a shell can export:
+
+```sh
+export DXVK_CONFIG='dxgi.maxDeviceMemory = 5120'
+```
+
+That export applies to subsequent child processes from that shell. In Steam's launch options, the equivalent is:
+
+```text
+DXVK_CONFIG='dxgi.maxDeviceMemory = 5120' %command%
+```
+
+Retain existing options and separate assignments with semicolons. For example, an existing `dxvk.maxFrameRate = 60` becomes `dxvk.maxFrameRate = 60; dxgi.maxDeviceMemory = 5120`. This is an illustrative existing value, not a recommendation to add a frame limiter. Replace an existing memory-size assignment instead of adding conflicting duplicates. For that example, the complete Steam launch setting is:
+
+```text
+DXVK_CONFIG='dxvk.maxFrameRate = 60; dxgi.maxDeviceMemory = 5120' %command%
+```
+
+In Bottles, use environment key `DXVK_CONFIG` and the complete value without the shell's outer quote characters. For UMU, export the complete value in the launching shell or put the assignment on the same launch command. Keep the runner and prefix paths from the [launch instructions](../README.md#install-and-launch).
+
+To return to the original configuration, close the game and restore the saved original environment value, or remove only the assignment added for this experiment. If there was no previous value, the environment variable can be removed. Removing an environment override may expose a nonzero value from a DXVK configuration file again. To explicitly select default reporting regardless of that file value, set `dxgi.maxDeviceMemory = 0` in the environment value while retaining its other assignments, then restart the game. Do not remove unrelated options, reset a prefix, change campaign content or restore an older shared save merely to revert this option. Runtime-version fallback is described in [Optional memory budget](../README.md#optional-memory-budget).
+
 ## Sparse CPU numbering
 
 With some host CPUs offline, GE-Proton 11-11 can return a raw Linux CPU ID from `GetCurrentProcessorNumber` while `CallNtPowerInformation` initializes only an online-count-sized array. The campaign indexes that array by the reported CPU ID to obtain its current MHz. An out-of-range selection can read a zero MHz value and lead to division by zero during checkpoint loading.

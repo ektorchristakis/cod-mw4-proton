@@ -3,7 +3,7 @@
 Use the release overlay to install **MW4-Bottles**, the Bottles adapter for the
 same patched Wine, renderer and DXVK-NVAPI shipped by MW4-Proton. Python 3.12 or
 newer and `pefile` are required, as for the Steam installer. Start Bottles once,
-then close it.
+then close it. These instructions target beta.3; a reused assembled runner must be beta.3 as well. The versioned [validation record](validation.md#beta3-validation) distinguishes its current checks from older client observations.
 
 Choose the payload and filesystem options **before the first installation**.
 The installer never overwrites an existing adapter, so include every needed
@@ -27,7 +27,7 @@ python3 tools/install-bottles.py
 
 ```sh
 python3 tools/install-bottles.py \
-  --runner '/path/to/MW4-Proton-0.1.0-beta.2'
+  --runner '/path/to/MW4-Proton-0.1.0-beta.3'
 ```
 
 **New payload, external game needing Flatpak access:**
@@ -41,7 +41,7 @@ python3 tools/install-bottles.py --target flatpak \
 
 ```sh
 python3 tools/install-bottles.py --target flatpak \
-  --runner '/path/to/MW4-Proton-0.1.0-beta.2' \
+  --runner '/path/to/MW4-Proton-0.1.0-beta.3' \
   --game '/path/to/Call of Duty - Modern Warfare 4/sp26/sp26-cod.exe'
 ```
 
@@ -62,7 +62,7 @@ installer.
 ## Create the bottle
 
 1. Restart Bottles and create a **Custom**, **64-bit** bottle. Select
-   **MW4-Bottles-0.1.0-beta.2** as its runner. Use a dedicated bottle for this game.
+   **MW4-Bottles-0.1.0-beta.3** as its runner. Use a dedicated bottle for this game.
 2. Leave Bottles' **DXVK**, **VKD3D**, and **DXVK NVAPI** switches off. The adapter
    installs the pinned campaign DLLs itself. Keep **WineBridge** and **virtual
    desktop** disabled so launches go through the adapter. Enable the discrete GPU
@@ -70,6 +70,10 @@ installer.
 3. Add the existing `sp26/sp26-cod.exe` as a program. Leave its launch arguments
    empty, then start it from Bottles. The controller supplies the campaign argument
    and sets the working directory to the installation root above `sp26`.
+4. If trying the optional budget report, configure `DXVK_CONFIG` using the
+   [memory-budget instructions](compatibility.md#dxgi-memory-budget). Keep existing
+   entries and separate assignments with semicolons. The installer does not select
+   a hardware profile; an existing nonzero memory-size setting also applies in beta.3.
 
 The adapter leaves Wine configuration tools available and seeds the two private
 CRT/WinHTTP DLLs before Wine initializes a new bottle. At campaign launch it
@@ -101,15 +105,15 @@ and the [`Start` launch form](https://github.com/bottlesdevs/Bottles/blob/47b3db
 The installer supports the native `$XDG_DATA_HOME/bottles` directory and Flatpak's
 `~/.var/app/com.usebottles.bottles/data/bottles`; pass `--bottles-root PATH` for a
 custom data directory. The [validation record](validation.md#flatpak-bottles-675-2026-11-03)
-documents prefix creation and a visible campaign menu with Flatpak Bottles 67.5.
-Resume and movement were not qualified in that session. Other Bottles versions
+documents prefix creation and a visible campaign menu using beta.2 with Flatpak Bottles 67.5.
+Resume and movement were not qualified in that beta.2 session; it does not establish beta.3 client gameplay coverage. Other Bottles versions
 and runtime/GPU combinations need their own checks.
 
 For a repeatable native adapter check, run this from the source checkout with a
 MinGW x86-64 compiler installed:
 
 ```sh
-python3 tests/bottles-smoke.py --runner /path/to/MW4-Proton-0.1.0-beta.2
+python3 tests/bottles-smoke.py --runner /path/to/MW4-Proton-0.1.0-beta.3
 ```
 
 It creates a disposable prefix under `/tmp`, initializes it through the adapter,
